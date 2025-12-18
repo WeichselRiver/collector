@@ -24,109 +24,180 @@ class CollectorDB:
     
     def _create_tables(self):
         """Create the necessary tables for storing records."""
+        # Create sequences for auto-incrementing IDs
         self.conn.execute("""
-            CREATE SEQUENCE IF NOT EXISTS seq_stamps_id START 1
+            CREATE SEQUENCE IF NOT EXISTS seq_katalog_id START 1
         """)
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS stamps (
-                id INTEGER PRIMARY KEY DEFAULT nextval('seq_stamps_id'),
-                country VARCHAR,
-                year INTEGER,
-                denomination VARCHAR,
-                condition VARCHAR,
-                description TEXT,
-                acquired_date DATE,
-                price DECIMAL(10, 2),
+            CREATE SEQUENCE IF NOT EXISTS seq_bestand_id START 1
+        """)
+        
+        # Table 1: Katalog (Catalog/Set information)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS katalog (
+                id INTEGER PRIMARY KEY DEFAULT nextval('seq_katalog_id'),
+                katalognummer VARCHAR NOT NULL UNIQUE,
+                gebiet VARCHAR,
+                jahr INTEGER,
+                satz VARCHAR,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Table 2: Bestand (Inventory/Physical stamps)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS bestand (
+                id INTEGER PRIMARY KEY DEFAULT nextval('seq_bestand_id'),
+                katalognummer VARCHAR NOT NULL,
+                erhaltung VARCHAR,
+                variante VARCHAR,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (katalognummer) REFERENCES katalog(katalognummer)
+            )
+        """)
     
-    def add_stamp(self, country: str, year: int, denomination: str, 
-                  condition: str, description: str = "", 
-                  acquired_date: Optional[str] = None, 
-                  price: Optional[float] = None) -> int:
+    def add_katalog(self, katalognummer: str, gebiet: str, 
+                    jahr: Optional[int] = None, satz: Optional[str] = None) -> int:
         """
-        Add a new stamp record to the database.
+        Add a new catalog entry to the database.
         
         Args:
-            country: Country of origin
-            year: Year of issue
-            denomination: Stamp denomination/value
-            condition: Condition of the stamp (e.g., 'Mint', 'Used', 'Good')
-            description: Additional description
-            acquired_date: Date acquired (YYYY-MM-DD format)
-            price: Purchase price
+            katalognummer: Catalog number (reference key)
+            gebiet: Region/Area
+            jahr: Year
+            satz: Set name/description
             
         Returns:
             ID of the inserted record
         """
-        if acquired_date is None:
-            acquired_date = datetime.now().strftime('%Y-%m-%d')
-        
         result = self.conn.execute("""
-            INSERT INTO stamps (country, year, denomination, condition, description, acquired_date, price)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO katalog (katalognummer, gebiet, jahr, satz)
+            VALUES (?, ?, ?, ?)
             RETURNING id
-        """, [country, year, denomination, condition, description, acquired_date, price])
+        """, [katalognummer, gebiet, jahr, satz])
         
         return result.fetchone()[0]
     
-    def get_all_stamps(self) -> List[Dict]:
+    def add_bestand(self, katalognummer: str, erhaltung: str, 
+                    variante: Optional[str] = None) -> int:
         """
-        Retrieve all stamp records from the database.
+        Add a new inventory/stock entry to the database.
+        
+        Args:
+            katalognummer: Catalog number (foreign key to katalog table)
+            erhaltung: Condition of the stamp
+            variante: Variant
+            
+        Returns:
+            ID of the inserted record
+        """
+        result = self.conn.execute("""
+            INSERT INTO bestand (katalognummer, erhaltung, variante)
+            VALUES (?, ?, ?)
+            RETURNING id
+        """, [katalognummer, erhaltung, variante])
+        
+        return result.fetchone()[0]
+    
+    def get_all_katalog(self) -> List[Dict]:
+        """
+        Retrieve all catalog entries from the database.
         
         Returns:
-            List of dictionaries containing stamp records
+            List of dictionaries containing catalog records
         """
-        result = self.conn.execute("SELECT * FROM stamps ORDER BY created_at DESC")
+        result = self.conn.execute("SELECT * FROM katalog ORDER BY created_at DESC")
         columns = [desc[0] for desc in result.description]
         return [dict(zip(columns, row)) for row in result.fetchall()]
     
-    def get_stamp_by_id(self, stamp_id: int) -> Optional[Dict]:
+    def get_all_bestand(self) -> List[Dict]:
         """
-        Retrieve a specific stamp record by ID.
+        Retrieve all inventory/stock entries from the database.
         
-        Args:
-            stamp_id: The ID of the stamp to retrieve
-            
         Returns:
-            Dictionary containing the stamp record, or None if not found
+            List of dictionaries containing inventory records
         """
-        result = self.conn.execute("SELECT * FROM stamps WHERE id = ?", [stamp_id])
-        row = result.fetchone()
-        if row:
-            columns = [desc[0] for desc in result.description]
-            return dict(zip(columns, row))
-        return None
+        result = self.conn.execute("SELECT * FROM bestand ORDER BY created_at DESC")
+        columns = [desc[0] for desc in result.description]
+        return [dict(zip(columns, row)) for row in result.fetchall()]
     
-    def search_stamps(self, country: Optional[str] = None, 
-                     year: Optional[int] = None,
-                     condition: Optional[str] = None) -> List[Dict]:
+    def get_bestand_with_katalog(self) -> List[Dict]:
         """
-        Search for stamps by various criteria.
+        Retrieve all inventory entries with their corresponding catalog information.
+        
+        Returns:
+            List of dictionaries containing joined records
+        """
+        result = self.conn.execute("""
+            SELECT 
+                b.id as bestand_id,
+                b.katalognummer,
+                b.erhaltung,
+                b.variante,
+                k.gebiet,
+                k.jahr,
+                k.satz
+            FROM bestand b
+            LEFT JOIN katalog k ON b.katalognummer = k.katalognummer
+            ORDER BY b.created_at DESC
+        """)
+        columns = [desc[0] for desc in result.description]
+        return [dict(zip(columns, row)) for row in result.fetchall()]
+    
+    def search_katalog(self, gebiet: Optional[str] = None, 
+                      jahr: Optional[int] = None,
+                      katalognummer: Optional[str] = None) -> List[Dict]:
+        """
+        Search for catalog entries by various criteria.
         
         Args:
-            country: Filter by country
-            year: Filter by year
-            condition: Filter by condition
+            gebiet: Filter by region/area
+            jahr: Filter by year
+            katalognummer: Filter by catalog number
             
         Returns:
-            List of matching stamp records
+            List of matching catalog records
         """
-        query = "SELECT * FROM stamps WHERE 1=1"
+        query = "SELECT * FROM katalog WHERE 1=1"
         params = []
         
-        if country:
-            query += " AND country = ?"
-            params.append(country)
-        if year:
-            query += " AND year = ?"
-            params.append(year)
-        if condition:
-            query += " AND condition = ?"
-            params.append(condition)
+        if gebiet:
+            query += " AND gebiet = ?"
+            params.append(gebiet)
+        if jahr:
+            query += " AND jahr = ?"
+            params.append(jahr)
+        if katalognummer:
+            query += " AND katalognummer = ?"
+            params.append(katalognummer)
         
-        query += " ORDER BY year DESC"
+        query += " ORDER BY jahr DESC"
+        
+        result = self.conn.execute(query, params)
+        columns = [desc[0] for desc in result.description]
+        return [dict(zip(columns, row)) for row in result.fetchall()]
+    
+    def search_bestand(self, katalognummer: Optional[str] = None,
+                      erhaltung: Optional[str] = None) -> List[Dict]:
+        """
+        Search for inventory entries by various criteria.
+        
+        Args:
+            katalognummer: Filter by catalog number
+            erhaltung: Filter by condition
+            
+        Returns:
+            List of matching inventory records
+        """
+        query = "SELECT * FROM bestand WHERE 1=1"
+        params = []
+        
+        if katalognummer:
+            query += " AND katalognummer = ?"
+            params.append(katalognummer)
+        if erhaltung:
+            query += " AND erhaltung = ?"
+            params.append(erhaltung)
         
         result = self.conn.execute(query, params)
         columns = [desc[0] for desc in result.description]
@@ -141,22 +212,31 @@ class CollectorDB:
         """
         stats = {}
         
-        # Total count
-        result = self.conn.execute("SELECT COUNT(*) FROM stamps")
-        stats['total_stamps'] = result.fetchone()[0]
+        # Total catalog entries
+        result = self.conn.execute("SELECT COUNT(*) FROM katalog")
+        stats['total_katalog'] = result.fetchone()[0]
         
-        # Count by country
+        # Total inventory entries
+        result = self.conn.execute("SELECT COUNT(*) FROM bestand")
+        stats['total_bestand'] = result.fetchone()[0]
+        
+        # Count by region (Gebiet)
         result = self.conn.execute("""
-            SELECT country, COUNT(*) as count 
-            FROM stamps 
-            GROUP BY country 
+            SELECT gebiet, COUNT(*) as count 
+            FROM katalog 
+            GROUP BY gebiet 
             ORDER BY count DESC
         """)
-        stats['by_country'] = {row[0]: row[1] for row in result.fetchall()}
+        stats['by_gebiet'] = {row[0]: row[1] for row in result.fetchall()}
         
-        # Total value
-        result = self.conn.execute("SELECT COALESCE(SUM(price), 0) FROM stamps WHERE price IS NOT NULL")
-        stats['total_value'] = result.fetchone()[0]
+        # Count by condition (Erhaltung)
+        result = self.conn.execute("""
+            SELECT erhaltung, COUNT(*) as count 
+            FROM bestand 
+            GROUP BY erhaltung 
+            ORDER BY count DESC
+        """)
+        stats['by_erhaltung'] = {row[0]: row[1] for row in result.fetchall()}
         
         return stats
     
@@ -179,58 +259,86 @@ def main():
     
     # Use context manager to ensure connection is closed
     with CollectorDB("collector.db") as db:
-        # Add some example stamps
-        print("Adding stamp records...")
-        stamp_id1 = db.add_stamp(
-            country="United States",
-            year=1918,
-            denomination="24 cents",
-            condition="Used",
-            description="Inverted Jenny airmail stamp",
-            price=150.00
+        # Add catalog entries
+        print("Adding catalog entries (Katalog)...")
+        kat_id1 = db.add_katalog(
+            katalognummer="DE-1849-001",
+            gebiet="Deutschland",
+            jahr=1849,
+            satz="Bayern Schwarzer Einser"
         )
-        print(f"Added stamp with ID: {stamp_id1}")
+        print(f"Added catalog entry with ID: {kat_id1}")
         
-        stamp_id2 = db.add_stamp(
-            country="United Kingdom",
-            year=1840,
-            denomination="1 penny",
-            condition="Mint",
-            description="Penny Black - first adhesive postage stamp",
-            price=500.00
+        kat_id2 = db.add_katalog(
+            katalognummer="GB-1840-001",
+            gebiet="Großbritannien",
+            jahr=1840,
+            satz="Penny Black"
         )
-        print(f"Added stamp with ID: {stamp_id2}")
+        print(f"Added catalog entry with ID: {kat_id2}")
         
-        stamp_id3 = db.add_stamp(
-            country="United States",
-            year=1847,
-            denomination="5 cents",
-            condition="Good",
-            description="Benjamin Franklin stamp",
-            price=75.00
+        kat_id3 = db.add_katalog(
+            katalognummer="DE-1850-005",
+            gebiet="Deutschland",
+            jahr=1850,
+            satz="Preußen"
         )
-        print(f"Added stamp with ID: {stamp_id3}")
+        print(f"Added catalog entry with ID: {kat_id3}")
         
-        # Retrieve all stamps
-        print("\n--- All Stamps ---")
-        all_stamps = db.get_all_stamps()
-        for stamp in all_stamps:
-            print(f"ID {stamp['id']}: {stamp['year']} {stamp['country']} - {stamp['denomination']} ({stamp['condition']}) - ${stamp['price']}")
+        # Add inventory entries
+        print("\n--- Adding inventory entries (Bestand) ---")
+        inv_id1 = db.add_bestand(
+            katalognummer="DE-1849-001",
+            erhaltung="Gestempelt",
+            variante="Type I"
+        )
+        print(f"Added inventory entry with ID: {inv_id1}")
         
-        # Search for stamps
-        print("\n--- United States Stamps ---")
-        us_stamps = db.search_stamps(country="United States")
-        for stamp in us_stamps:
-            print(f"ID {stamp['id']}: {stamp['year']} - {stamp['description']}")
+        inv_id2 = db.add_bestand(
+            katalognummer="GB-1840-001",
+            erhaltung="Postfrisch",
+            variante=None
+        )
+        print(f"Added inventory entry with ID: {inv_id2}")
+        
+        inv_id3 = db.add_bestand(
+            katalognummer="DE-1849-001",
+            erhaltung="Ungebraucht",
+            variante="Type II"
+        )
+        print(f"Added inventory entry with ID: {inv_id3}")
+        
+        # Retrieve all records with join
+        print("\n--- All Inventory with Catalog Info ---")
+        all_records = db.get_bestand_with_katalog()
+        for record in all_records:
+            print(f"ID {record['bestand_id']}: {record['katalognummer']} - "
+                  f"{record['gebiet']} {record['jahr']} - "
+                  f"Erhaltung: {record['erhaltung']}, Variante: {record['variante']}")
+        
+        # Search for specific catalog
+        print("\n--- Deutschland Catalog Entries ---")
+        de_katalog = db.search_katalog(gebiet="Deutschland")
+        for kat in de_katalog:
+            print(f"ID {kat['id']}: {kat['katalognummer']} - {kat['jahr']} {kat['satz']}")
+        
+        # Search for inventory by catalog number
+        print("\n--- Inventory for DE-1849-001 ---")
+        de_bestand = db.search_bestand(katalognummer="DE-1849-001")
+        for inv in de_bestand:
+            print(f"ID {inv['id']}: Erhaltung: {inv['erhaltung']}, Variante: {inv['variante']}")
         
         # Get statistics
         print("\n--- Collection Statistics ---")
         stats = db.get_statistics()
-        print(f"Total stamps: {stats['total_stamps']}")
-        print(f"Total value: ${stats['total_value']:.2f}")
-        print("Stamps by country:")
-        for country, count in stats['by_country'].items():
-            print(f"  {country}: {count}")
+        print(f"Total catalog entries: {stats['total_katalog']}")
+        print(f"Total inventory entries: {stats['total_bestand']}")
+        print("Entries by region (Gebiet):")
+        for gebiet, count in stats['by_gebiet'].items():
+            print(f"  {gebiet}: {count}")
+        print("Entries by condition (Erhaltung):")
+        for erhaltung, count in stats['by_erhaltung'].items():
+            print(f"  {erhaltung}: {count}")
     
     print("\nDatabase operations completed successfully!")
 

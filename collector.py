@@ -82,7 +82,9 @@ class StampCollector:
                 FROM stamps
             """).fetchone()
             
-            print(f"\nTotal Stamps: {stats[0]} | Total Value: ${stats[1]:.2f} | Average Value: ${stats[2]:.2f}")
+            total_value = stats[1] if stats[1] is not None else 0
+            avg_value = stats[2] if stats[2] is not None else 0
+            print(f"\nTotal Stamps: {stats[0]} | Total Value: ${total_value:.2f} | Average Value: ${avg_value:.2f}")
             
         except Exception as e:
             print(f"\n✗ Error viewing stamps: {e}")

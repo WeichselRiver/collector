@@ -155,8 +155,8 @@ class CollectorDB:
         stats['by_country'] = {row[0]: row[1] for row in result.fetchall()}
         
         # Total value
-        result = self.conn.execute("SELECT SUM(price) FROM stamps WHERE price IS NOT NULL")
-        stats['total_value'] = result.fetchone()[0] or 0.0
+        result = self.conn.execute("SELECT COALESCE(SUM(price), 0) FROM stamps WHERE price IS NOT NULL")
+        stats['total_value'] = result.fetchone()[0]
         
         return stats
     

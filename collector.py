@@ -6,6 +6,8 @@ This script allows users to input and store information about their stamp collec
 
 import duckdb
 import sys
+import hashlib
+import getpass
 from datetime import datetime
 from pathlib import Path
 
@@ -36,6 +38,13 @@ class StampCollector:
         """)
         self.conn.execute("""
             CREATE SEQUENCE IF NOT EXISTS stamp_id_seq START 1
+        """)
+        # Create a table to store the password hash
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key VARCHAR PRIMARY KEY,
+                value VARCHAR
+            )
         """)
     
     def add_stamp(self, country, year, denomination, condition, description, price):
@@ -117,6 +126,38 @@ class StampCollector:
     def close(self):
         """Close the database connection"""
         self.conn.close()
+    
+    def _hash_password(self, password):
+        """Hash a password using SHA-256"""
+        return hashlib.sha256(password.encode()).hexdigest()
+    
+    def is_password_set(self):
+        """Check if a password has been set"""
+        result = self.conn.execute("""
+            SELECT value FROM settings WHERE key = 'password_hash'
+        """).fetchone()
+        return result is not None
+    
+    def set_password(self, password):
+        """Set the password for adding stamps"""
+        password_hash = self._hash_password(password)
+        # Use INSERT OR REPLACE to handle both new and existing passwords
+        self.conn.execute("""
+            INSERT OR REPLACE INTO settings (key, value) VALUES ('password_hash', ?)
+        """, [password_hash])
+        return True
+    
+    def verify_password(self, password):
+        """Verify if the provided password matches the stored hash"""
+        password_hash = self._hash_password(password)
+        result = self.conn.execute("""
+            SELECT value FROM settings WHERE key = 'password_hash'
+        """).fetchone()
+        
+        if result is None:
+            return False
+        
+        return result[0] == password_hash
 
 
 def get_user_input(prompt, input_type=str, required=True):
@@ -165,14 +206,42 @@ def main():
     
     collector = StampCollector()
     
+    # Check if password is set, if not, prompt to set it
+    if not collector.is_password_set():
+        print("\n" + "="*50)
+        print("FIRST TIME SETUP")
+        print("="*50)
+        print("Please set a password to protect adding stamps.")
+        while True:
+            password = getpass.getpass("Enter new password: ")
+            if not password:
+                print("Password cannot be empty. Please try again.")
+                continue
+            confirm_password = getpass.getpass("Confirm password: ")
+            if password == confirm_password:
+                collector.set_password(password)
+                print("✓ Password set successfully!")
+                break
+            else:
+                print("✗ Passwords do not match. Please try again.")
+    
     try:
         while True:
             print_menu()
             choice = get_user_input("Select an option (1-4): ")
             
             if choice == "1":
-                # Add new stamp
+                # Add new stamp - requires password
                 print("\n--- Add New Stamp ---")
+                
+                # Verify password before allowing to add stamp
+                password = getpass.getpass("Enter password to add stamp: ")
+                if not collector.verify_password(password):
+                    print("\n✗ Incorrect password. Cannot add stamp.")
+                    continue
+                
+                print("✓ Password verified.")
+                
                 country = get_user_input("Country: ")
                 if country is None:
                     continue
